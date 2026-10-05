@@ -1,0 +1,15 @@
+# Keras 3 runs with PyTorch as its backend in this project.
+keras==3.15.1
+torch==2.14.0
+
+# Data loading and preprocessing.
+numpy==2.5.3
+pandas==3.0.6
+Pillow==12.3.0
+scipy==1.18.1
+
+# Class weights and evaluation metrics.
+scikit-learn==1.9.1
+
+# Required when loading legacy .h5 Keras artifacts.
+h5py==3.14.0

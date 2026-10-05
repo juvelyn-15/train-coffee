@@ -1,12 +1,15 @@
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
+"""Keras 3 legacy ImageDataGenerator for raw RGB train images."""
+
+import os
+
+# Keras must be configured before importing its legacy preprocessing API.
+os.environ.setdefault("KERAS_BACKEND", "torch")
+
+from keras.src.legacy.preprocessing.image import ImageDataGenerator
 
 
 class Augmentation(ImageDataGenerator):
-    """Augment training images; return float32 batches in [0, 255].
-
-    Pass raw RGB arrays shaped (N, H, W, 3), not normalized images.
-    Apply model-specific input preprocessing after augmentation.
-    """
+    """Augment training images in the raw [0, 255] pixel range."""
 
     def __init__(
         self,
