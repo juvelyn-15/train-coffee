@@ -2,8 +2,10 @@ from tensorflow.keras.preprocessing.image import ImageDataGenerator
 
 
 class Augmentation(ImageDataGenerator):
-    """Keep Keras' flow API; return float32 batches scaled to [0, 1].
+    """Augment training images; return float32 batches in [0, 255].
+
     Pass raw RGB arrays shaped (N, H, W, 3), not normalized images.
+    Apply model-specific input preprocessing after augmentation.
     """
 
     def __init__(
@@ -23,7 +25,6 @@ class Augmentation(ImageDataGenerator):
             vertical_flip=vertical_flip,
             brightness_range=brightness_range,
             fill_mode="nearest",
-            rescale=1.0 / 255,
             data_format="channels_last",
             dtype="float32",
         )
