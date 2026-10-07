@@ -1,168 +1,53 @@
-# Tiền xử lý dữ liệu USK-Coffee
+# USK-Coffee preprocessing
 
-`DataPreprocessor` chuyển cấu trúc thư mục trong `data/` thành manifest và các mảng dữ liệu `X`, `y` để sử dụng cho ba mô hình: CNN đơn giản, CNN phức tạp và transfer learning.
+The dataset is USK-Coffee, introduced by Febriana, Muchtar, Dawood and Lin in 2022.
+The [authors' dataset page](https://coffee.comvislab-usk.org/) explicitly supports merging longberry, peaberry and premium into normal, and keeping defect as the second class.
 
-Các bước augmentation, normalization và class weights không được thực hiện trong `DataPreprocessor`; chúng thuộc bước training.
+| Split | Normal (0) | Defect (1) | Total |
+|---|---:|---:|---:|
+| Train | 3599 | 1200 | 4799 |
+| Validation | 1200 | 400 | 1600 |
+| Test | 1199 | 400 | 1599 |
 
-## 1. Đặc điểm của dataset
+These counts describe the local dataset after the two previously documented duplicate paths were removed.
+The EDA notebook's stored outputs describe the original 8000 files and must not be treated as current counts.
 
-Nguồn: Febriana, Muchtar, Dawood, Lin (2022), *USK-COFFEE Dataset: A Multi-Class Green Arabica Coffee Bean Dataset for Deep Learning*. File gốc chỉ ghi nhận những nội dung có thể xác định từ các trích đoạn của bài báo.
+## Cleaning and manifest
 
-| Thành phần | Dataset / nghiên cứu gốc | `DataPreprocessor` |
-|---|---|---|
-| Ảnh | 8.000 ảnh, 4 lớp: peaberry, longberry, premium, defect; mỗi lớp 2.000 ảnh | Giữ nguyên dữ liệu và ánh xạ thành bài toán nhị phân Normal vs Defect |
-| Nhãn | 4 lớp | Normal = 0: longberry, peaberry, premium; Defect = 1 |
-| Kích thước | 256×256 RGB | Đọc ảnh ở dạng RGB, kỳ vọng kích thước 256×256 |
-| Chia dữ liệu | Train/validation/test | Sử dụng các split có sẵn trong `data/` |
-| Mô hình tham chiếu | ResNet-18 và MobileNetV2, input 3×256×256 | Giữ kích thước 256×256 cho cả ba mô hình |
-| Normalization / augmentation | Không được xác định từ các trích đoạn đã đọc | Không thực hiện trong `DataPreprocessor` |
+`DataPreprocessor.build_file_table()` preserves the existing train/val/test folders and creates a deterministic manifest containing paths, original classes, binary labels and SHA-256 hashes.
+Unexpected or missing class folders, empty binary splits and exact duplicates stop the workflow for review.
+`train/peaberry/14.jpg` and `test/peaberry/1916.jpg` are excluded if present, without deleting either file.
+Both paths are absent in the current local dataset.
+A manifest fingerprint identifies the exact files used by every experiment.
+The experiment launcher saves that manifest and freezes its fingerprint before training.
 
-EDA của dataset hiện tại cho thấy các file đã có kích thước 256×256 RGB. Vì vậy, bước preprocessing không cần resize lại ảnh.
+The original notebook identified a visually similar train/test pair even though its file hashes differed.
+SHA-256 detects exact file duplicates, not acquisition-level dependence or visually similar images with different encodings.
+A 63-bit perceptual-hash scan found several similar-shape cross-split candidates.
+The twelve closest candidate pairs were inspected visually; hash similarity alone did not justify excluding more images.
+This screening is not an exhaustive near-duplicate or physical-bean identity audit.
+No bean-instance identifiers are available to prove independence at the physical-bean level.
 
-## 2. Thiết kế preprocessing
+## Image and label contract
 
-Pipeline của `DataPreprocessor`:
+`load_split()` returns RGB `uint8` arrays of shape `(N, 256, 256, 3)` in `[0,255]` and float binary labels of shape `(N,1)`.
+Images with a different size or color mode raise an explicit error.
+All 7998 current files were decoded successfully as 256x256 RGB during inspection.
 
-```text
-data/
-  ↓
-remove DUPLICATE_PATHS
-  ↓
-build manifest
-  ↓
-load RGB 256×256
-  ↓
-X_train, y_train
-X_val, y_val
-X_test, y_test
-```
+Training and evaluation request a read-only float32 memory map of the same raw pixel values.
+This avoids ImageDataGenerator creating a second full float32 copy in RAM on this 16 GB machine.
+Caches are keyed by the content manifest fingerprint and written atomically under `artifacts/data_cache/`.
 
-### 2.1. Loại bỏ các file được chỉ định
+Normalization is saved inside each model and applies to train, validation, test and inference.
+Simple and complex CNNs use `Rescaling(1/255)`.
+ResNet18 uses the image converter supplied with its ImageNet preset, with a 256x256 output size.
+ResNet50 uses its ImageNet RGB-to-BGR and mean-subtraction convention through a serializable layer.
+EfficientNetB4 already contains its input preprocessing.
+The validator must pass raw RGB pixels and must not divide them by 255 again.
 
-`DataPreprocessor` loại bỏ các file duplicates xác định trong EDA, được khai báo trực tiếp trong `DUPLICATE_PATHS`:
+## Evaluation boundary
 
-```python
-DUPLICATE_PATHS = {
-    "data/train/peaberry/14.jpg",
-    "data/test/peaberry/1916.jpg",
-}
-```
-
-## 3. Xây dựng manifest
-
-`build_file_table()` duyệt qua ba split `train`, `val` và `test`, sau đó kiểm tra cấu trúc class folder và tạo một `pandas.DataFrame` mô tả dataset.
-
-Manifest gồm bốn trường:
-
-| Trường | Ý nghĩa |
-|---|---|
-| `path` | Đường dẫn đến file ảnh |
-| `split` | `train`, `val` hoặc `test` |
-| `class_name` | Tên class gốc |
-| `label` | Nhãn nhị phân: Normal = 0, Defect = 1 |
-
-Các class hợp lệ:
-
-```text
-longberry
-peaberry
-premium
-defect
-```
-
-Ba class `longberry`, `peaberry` và `premium` được gộp thành Normal:
-
-```text
-longberry → 0
-peaberry  → 0
-premium   → 0
-defect    → 1
-```
-
-`defect` là positive class, vì vậy nhãn 1 được sử dụng để tính precision, recall và F1 trong bước đánh giá mô hình.
-
-`build_file_table()` cũng kiểm tra:
-
-- split folder có tồn tại hay không;
-- class folder có thuộc danh sách class hợp lệ hay không;
-- dataset có chứa ảnh hay không;
-- phần mở rộng của file có thuộc nhóm được hỗ trợ hay không.
-
-## 4. Load ảnh RGB
-
-`load_rgb()` mở từng ảnh bằng PIL và chuyển ảnh sang RGB:
-
-```python
-with Image.open(path) as image:
-    return np.asarray(
-        image.convert("RGB"),
-        dtype=np.uint8,
-    )
-```
-
-Ảnh sau khi load có dạng:
-
-```text
-(height, width, channels)
-= (256, 256, 3)
-```
-
-Các giá trị pixel vẫn giữ nguyên ở dạng `uint8` trong khoảng:
-
-```text
-0–255
-```
-
-`DataPreprocessor` không thực hiện:
-
-- chia pixel cho 255;
-- mean/std normalization;
-- ImageNet normalization;
-- augmentation.
-
-Các bước này được thực hiện ở training pipeline.
-
-## 5. Output
-
-`preprocess()` trả về:
-
-```python
-(X_train, y_train), (X_val, y_val), (X_test, y_test)
-```
-
-Trong đó:
-
-```text
-X_train: uint8, shape (N_train, 256, 256, 3)
-X_val:   uint8, shape (N_val, 256, 256, 3)
-X_test:  uint8, shape (N_test, 256, 256, 3)
-```
-
-Label:
-
-```text
-y_train: integer vector gồm 0 và 1
-y_val:   integer vector gồm 0 và 1
-y_test:  integer vector gồm 0 và 1
-```
-
-
-## 5. Các quyết định thiết kế
-
-| Thành phần | Quyết định |
-|---|---|
-| Bài toán | Binary classification: Normal vs Defect |
-| Normal | longberry, peaberry, premium |
-| Defect | defect |
-| Label | Normal = 0, Defect = 1 |
-| Duplicate handling | Chỉ loại các path có trong `DUPLICATE_PATHS` |
-| Resize | Không cần vì dataset đã là 256×256 |
-| Channels | RGB |
-| Pixel type | `uint8` |
-| Pixel range | 0–255 |
-| Normalization | Thực hiện ở training |
-| Augmentation | Thực hiện ở training |
-| Class weights | Tính ở training |
-| One-hot encoding | Không sử dụng |
-
-
+Augmentation and class weights affect training only.
+Validation and test preserve the natural class distribution.
+The four experiments use identical data files and deterministic ordering within each split.
+Test evaluation follows validation selection and does not influence the selected configuration or threshold.

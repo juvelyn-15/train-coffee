@@ -12,27 +12,24 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import tensorflow as tf
+from tensorflow.keras.applications import ResNet50
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
 from tensorflow.keras.layers import (
-    Activation,
     BatchNormalization,
-    Conv2D,
     Dense,
     Dropout,
     GlobalAveragePooling2D,
     Input,
-    MaxPooling2D,
-    Rescaling,
 )
 from tensorflow.keras.metrics import BinaryAccuracy, F1Score, Precision, Recall
 from tensorflow.keras.models import Sequential, load_model
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 
-from preprocessing import DataPreprocessor
+from preprocessing import DataPreprocessor, ResNet50Preprocessing
 
 # 2. Training settings
-MODEL_NAME = 'complex_cnn'
+MODEL_NAME = 'resnet50'
 EXPERIMENT = os.environ.get('EXPERIMENT', 'E0')
 SEED = int(os.environ.get('SEED', '42'))
 SMOKE_TEST = os.environ.get('SMOKE_TEST', '0') == '1'
@@ -98,28 +95,17 @@ if USE_CLASS_WEIGHT:
     class_weight = {label: len(y_train) / (2 * int(count))
                     for label, count in enumerate(counts)}
 
-# 5. Build model: VGG blocks, following Chapter 5.2, slides 6 and 8.
-def vgg_block(num_convs, num_filters):
-    block = Sequential()
-    for _ in range(num_convs):
-        block.add(Conv2D(num_filters, (3, 3), padding='same'))
-        block.add(BatchNormalization())
-        block.add(Activation('relu'))
-    block.add(MaxPooling2D((2, 2)))
-    block.add(Dropout(0.25))
-    return block
+# 5. Build model with ImageNet pretrained ResNet50
 
-
-model = Sequential()
-model.add(Input(shape=(256, 256, 3)))
-model.add(Rescaling(1.0 / 255))
-conv_arch = ((2, 32), (2, 64), (2, 128), (2, 256))
-for num_convs, num_filters in conv_arch:
-    model.add(vgg_block(num_convs, num_filters))
-model.add(GlobalAveragePooling2D())
-model.add(Dense(128, activation='relu'))
-model.add(Dropout(0.5))
-model.add(Dense(1, activation='sigmoid'))
+base_network = ResNet50(
+    weights='imagenet', include_top=False, input_shape=(256, 256, 3)
+)
+base_network.trainable = False
+model = Sequential([
+    Input(shape=(256, 256, 3)), ResNet50Preprocessing(), base_network,
+    GlobalAveragePooling2D(), Dense(128, activation='relu'), Dropout(0.5),
+    Dense(1, activation='sigmoid'),
+])
 
 # 6. Compile model
 model.compile(
@@ -140,17 +126,41 @@ early_stopping = EarlyStopping(
 )
 start_time = time.monotonic()
 
-# 7. Train model
+# 7. Train the new head, then fine-tune the last backbone stage.
 H = model.fit(
-    train_generator,
-    validation_data=val_generator,
-    epochs=1 if SMOKE_TEST else EPOCHS,
-    class_weight=class_weight,
-    callbacks=[checkpoint, early_stopping],
-    verbose=2,
+    train_generator, validation_data=val_generator,
+    epochs=1 if SMOKE_TEST else 10,
+    class_weight=class_weight, callbacks=[checkpoint], verbose=2,
 )
-history = pd.DataFrame(H.history)
-history.insert(0, 'phase', 'training')
+history_head = pd.DataFrame(H.history)
+history_head.insert(0, 'phase', 'head')
+
+base_network.trainable = True
+for layer in base_network.layers:
+    layer.trainable = layer.name.startswith('conv5_')
+    if isinstance(layer, BatchNormalization):
+        layer.trainable = False
+if not base_network.trainable_weights:
+    raise ValueError('The selected fine-tuning stage has no trainable weights')
+
+# Changing trainable layers requires recompilation.
+model.compile(
+    optimizer=Adam(learning_rate=1e-5),
+    loss='binary_crossentropy',
+    jit_compile=False,
+    metrics=[BinaryAccuracy(name='accuracy', threshold=THRESHOLD),
+             Precision(name='precision_defect', thresholds=THRESHOLD),
+             Recall(name='recall_defect', thresholds=THRESHOLD),
+             F1Score(name='f1_defect', threshold=THRESHOLD, average='micro')],
+)
+H_finetune = model.fit(
+    train_generator, validation_data=val_generator,
+    epochs=1 if SMOKE_TEST else 40,
+    class_weight=class_weight, callbacks=[checkpoint, early_stopping], verbose=2,
+)
+history_finetune = pd.DataFrame(H_finetune.history)
+history_finetune.insert(0, 'phase', 'fine_tune')
+history = pd.concat([history_head, history_finetune], ignore_index=True)
 
 # 8. Save the best model and validation results; test is evaluated separately.
 training_seconds = time.monotonic() - start_time
@@ -175,11 +185,12 @@ run = {
     'best_phase': str(history.iloc[history['val_f1_defect'].to_numpy().argmax()]['phase']),
     'best_validation_f1_defect': float(history['val_f1_defect'].max()), 'epochs_completed': len(history),
     'training_seconds': training_seconds, 'parameters': model.count_params(),
-    'pretrained': False, 'optimizer': 'Adam',
+    'pretrained': True, 'optimizer': 'Adam',
     'learning_rate': LEARNING_RATE, 'max_epochs': 50,
-    'head_max_epochs': None, 'fine_tune_max_epochs': None,
-    'fine_tune_learning_rate': None, 'fine_tune_stage': None,
+    'head_max_epochs': 10, 'fine_tune_max_epochs': 40,
+    'fine_tune_learning_rate': 1e-5, 'fine_tune_stage': 'conv5_',
     'early_stopping_patience': 8, 'selection_metric': 'val_f1_defect',
+    'fine_tune_layers': [layer.name for layer in base_network.layers if layer.trainable],
     'tensorflow_version': tf.__version__, 'keras_version': tf.keras.__version__,
 }
 (RUN_DIR / 'run.json').write_text(json.dumps(run, indent=2))

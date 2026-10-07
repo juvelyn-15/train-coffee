@@ -1,140 +1,176 @@
-"""Train the coffee bean CNN with standalone Keras 3."""
-
-import argparse
-import json
+# 1. Import libraries
 import os
-from datetime import datetime
+
+os.environ['KERAS_BACKEND'] = 'tensorflow'
+os.environ.setdefault('TF_NUM_INTRAOP_THREADS', '4')
+os.environ.setdefault('TF_NUM_INTEROP_THREADS', '2')
+
+import json
+import time
 from pathlib import Path
 
-# Configure Keras before importing it: Keras 3 will use PyTorch as backend.
-os.environ.setdefault("KERAS_BACKEND", "torch")
-
-import keras
 import numpy as np
-from keras import layers
-from sklearn.utils.class_weight import compute_class_weight
+import pandas as pd
+import tensorflow as tf
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
+from tensorflow.keras.layers import (
+    Conv2D,
+    Dense,
+    Dropout,
+    GlobalAveragePooling2D,
+    Input,
+    MaxPooling2D,
+    Rescaling,
+)
+from tensorflow.keras.metrics import BinaryAccuracy, F1Score, Precision, Recall
+from tensorflow.keras.models import Sequential, load_model
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
 
-from augmentation import Augmentation
-from config import load_config
 from preprocessing import DataPreprocessor
 
-BATCH_SIZE = 32
-EPOCHS = 20
-ARTIFACTS_DIR = Path("artifacts")
+# 2. Training settings
+MODEL_NAME = 'simple_cnn'
+EXPERIMENT = os.environ.get('EXPERIMENT', 'E0')
+SEED = int(os.environ.get('SEED', '42'))
+SMOKE_TEST = os.environ.get('SMOKE_TEST', '0') == '1'
+BATCH_SIZE = 16
+EPOCHS = 50
+LEARNING_RATE = 0.001
+THRESHOLD = 0.5
+USE_AUGMENTATION = EXPERIMENT in ('E1', 'E3')
+USE_CLASS_WEIGHT = EXPERIMENT in ('E2', 'E3')
+if EXPERIMENT not in ('E0', 'E1', 'E2', 'E3'):
+    raise ValueError('EXPERIMENT must be E0, E1, E2 or E3')
 
+tf.keras.utils.set_random_seed(SEED)
+tf.config.experimental.enable_op_determinism()
+for gpu in tf.config.list_physical_devices('GPU'):
+    tf.config.experimental.set_memory_growth(gpu, True)
 
-def build_model(
-    input_shape=(256, 256, 3),
-    num_classes=2,
-    dropout=0.25,
-    dense_dropout=0.5,
-):
+ARTIFACTS_DIR = Path(__file__).resolve().parent / 'artifacts'
+if SMOKE_TEST:
+    ARTIFACTS_DIR = ARTIFACTS_DIR / 'smoke'
+RUN_DIR = ARTIFACTS_DIR / MODEL_NAME / EXPERIMENT / f'seed_{SEED}'
+if (RUN_DIR / 'run.json').exists():
+    raise ValueError(f'Completed run already exists: {RUN_DIR}')
+RUN_DIR.mkdir(parents=True, exist_ok=True)
 
-    return keras.Sequential(
-        [
-            layers.Input(shape=input_shape),
-            layers.Rescaling(1.0 / 255.0),
-            layers.Conv2D(16, 3, padding="same", activation="relu"),
-            layers.BatchNormalization(),
-            layers.MaxPooling2D(2),
-            layers.Dropout(dropout),
-            layers.Conv2D(32, 3, padding="same", activation="relu"),
-            layers.BatchNormalization(),
-            layers.MaxPooling2D(2),
-            layers.Dropout(dropout),
-            layers.Conv2D(64, 3, padding="same", activation="relu"),
-            layers.BatchNormalization(),
-            layers.MaxPooling2D(2),
-            layers.Dropout(dropout),
-            layers.GlobalAveragePooling2D(),
-            layers.Dense(128, activation="relu"),
-            layers.BatchNormalization(),
-            layers.Dropout(dense_dropout),
-            layers.Dense(num_classes, activation="softmax"),
-        ]
+# 3. Load data
+preprocessor = DataPreprocessor()
+file_table = preprocessor.build_file_table()
+dataset_fingerprint = preprocessor.fingerprint(file_table)
+if os.environ.get('DATASET_FINGERPRINT', dataset_fingerprint) != dataset_fingerprint:
+    raise ValueError('Dataset changed after the experiment protocol was locked')
+if SMOKE_TEST:
+    file_table = file_table.groupby(['split', 'class_name'], sort=False).head(8)
+x_train, y_train = preprocessor.load_split(file_table, 'train', memory_map=True)
+x_val, y_val = preprocessor.load_split(file_table, 'val', memory_map=True)
+print('Train:', x_train.shape, y_train.shape)
+print('Validation:', x_val.shape, y_val.shape)
+
+# 4. Data augmentation and class weights
+if USE_AUGMENTATION:
+    datagen = ImageDataGenerator(
+        rotation_range=15,
+        width_shift_range=0.05,
+        height_shift_range=0.05,
+        horizontal_flip=True,
+        vertical_flip=True,
+        brightness_range=(0.9, 1.1),
+        fill_mode='nearest',
     )
+else:
+    datagen = ImageDataGenerator()
 
+train_generator = datagen.flow(
+    x_train, y_train, batch_size=BATCH_SIZE, shuffle=True, seed=SEED
+)
+# The validation generator changes no pixels and includes the final batch.
+val_generator = ImageDataGenerator().flow(
+    x_val, y_val, batch_size=BATCH_SIZE, shuffle=False
+)
+counts = np.bincount(y_train.astype(int).ravel(), minlength=2)
+class_weight = None
+if USE_CLASS_WEIGHT:
+    class_weight = {label: len(y_train) / (2 * int(count))
+                    for label, count in enumerate(counts)}
 
-def load_train_val_data():
-    file_table = DataPreprocessor().build_file_table()
-    train_images, train_labels = DataPreprocessor().load_split(file_table, "train")
-    val_images, val_labels = DataPreprocessor().load_split(file_table, "val")
-    return (
-        train_images,
-        train_labels,
-        val_images,
-        val_labels,
-    )
+# 5. Build model
+model = Sequential()
+model.add(Input(shape=(256, 256, 3)))
+model.add(Rescaling(1.0 / 255))
+model.add(Conv2D(16, (3, 3), padding='same', activation='relu'))
+model.add(MaxPooling2D((2, 2)))
+model.add(Conv2D(32, (3, 3), padding='same', activation='relu'))
+model.add(MaxPooling2D((2, 2)))
+model.add(Conv2D(64, (3, 3), padding='same', activation='relu'))
+model.add(MaxPooling2D((2, 2)))
+model.add(GlobalAveragePooling2D())
+model.add(Dense(128, activation='relu'))
+model.add(Dropout(0.5))
+model.add(Dense(1, activation='sigmoid'))
 
+# 6. Compile model
+model.compile(
+    optimizer=Adam(learning_rate=LEARNING_RATE),
+    loss='binary_crossentropy',
+    jit_compile=False,
+    metrics=[BinaryAccuracy(name='accuracy', threshold=THRESHOLD),
+             Precision(name='precision_defect', thresholds=THRESHOLD),
+             Recall(name='recall_defect', thresholds=THRESHOLD),
+             F1Score(name='f1_defect', threshold=THRESHOLD, average='micro')],
+)
+model.summary()
+checkpoint = ModelCheckpoint(
+    RUN_DIR / 'best.keras', monitor='val_f1_defect', mode='max', save_best_only=True
+)
+early_stopping = EarlyStopping(
+    monitor='val_f1_defect', mode='max', patience=8
+)
+start_time = time.monotonic()
 
-def main():
-    config = load_config("simple")
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default="simple")
-    parser.add_argument("--epochs", type=int)
-    parser.add_argument("--batch-size", type=int)
-    args = parser.parse_args()
-    if args.config != "simple":
-        config = load_config(args.config)
-    epochs = args.epochs or config["epochs"]
-    batch_size = args.batch_size or config["batch_size"]
+# 7. Train model
+H = model.fit(
+    train_generator,
+    validation_data=val_generator,
+    epochs=1 if SMOKE_TEST else EPOCHS,
+    class_weight=class_weight,
+    callbacks=[checkpoint, early_stopping],
+    verbose=2,
+)
+history = pd.DataFrame(H.history)
+history.insert(0, 'phase', 'training')
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    artifact_dir = ARTIFACTS_DIR / timestamp
-    artifact_dir.mkdir(parents=True, exist_ok=False)
-
-    train_images, train_labels, val_images, val_labels = load_train_val_data()
-    labels = np.unique(train_labels)
-    weights = compute_class_weight(
-        class_weight="balanced", classes=labels, y=train_labels
-    )
-    class_weight = {int(label): float(weight) for label, weight in zip(labels, weights)}
-
-    model = build_model(
-        dropout=config["dropout"], dense_dropout=config["dense_dropout"]
-    )
-    model.compile(
-        optimizer=keras.optimizers.Adam(config["learning_rate"]),
-        loss="sparse_categorical_crossentropy",
-        metrics=["accuracy"],
-    )
-    train_batches = Augmentation(**config["augmentation"]).flow(
-        train_images,
-        train_labels,
-        batch_size=batch_size,
-        shuffle=True,
-        seed=42,
-    )
-    history = model.fit(
-        train_batches,
-        epochs=epochs,
-        validation_data=(val_images, val_labels),
-        class_weight=class_weight,
-        verbose=2,
-    )
-
-    model_path = artifact_dir / "keras_coffee_bean.keras"
-    model.save(model_path)
-    (artifact_dir / "history.json").write_text(
-        json.dumps(history.history, indent=2), encoding="utf-8"
-    )
-    (artifact_dir / "training_config.json").write_text(
-        json.dumps(
-            {
-                "timestamp": timestamp,
-                "backend": "keras-torch",
-                **config,
-                "batch_size": batch_size,
-                "epochs": epochs,
-                "class_weight": class_weight,
-                "model": model_path.name,
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
-    print(f"Artifacts saved to {artifact_dir}")
-
-
-if __name__ == "__main__":
-    main()
+# 8. Save the best model and validation results; test is evaluated separately.
+training_seconds = time.monotonic() - start_time
+history.index.name = 'epoch'
+history.to_csv(RUN_DIR / 'history.csv')
+model = load_model(RUN_DIR / 'best.keras', compile=False)
+model.jit_compile = False
+# Retain the selected weights and preprocessing without unused optimizer slots.
+model.save(RUN_DIR / 'best.keras')
+probabilities = model.predict(val_generator, verbose=0).ravel()
+validation_predictions = file_table[file_table.split == 'val'][['relative_path', 'class_name', 'label']].copy()
+validation_predictions['p_defect'] = probabilities
+validation_predictions.to_csv(RUN_DIR / 'validation_predictions.csv', index=False)
+run = {
+    'model': MODEL_NAME, 'experiment': EXPERIMENT, 'seed': SEED,
+    'smoke_test': SMOKE_TEST, 'dataset_fingerprint': dataset_fingerprint,
+    'input_shape': [256, 256, 3], 'input_range': [0, 255],
+    'threshold': THRESHOLD, 'batch_size': BATCH_SIZE,
+    'augmentation': USE_AUGMENTATION, 'class_weights': class_weight,
+    'train_counts': counts.tolist(),
+    'best_epoch': int(history['val_f1_defect'].to_numpy().argmax()) + 1,
+    'best_phase': str(history.iloc[history['val_f1_defect'].to_numpy().argmax()]['phase']),
+    'best_validation_f1_defect': float(history['val_f1_defect'].max()), 'epochs_completed': len(history),
+    'training_seconds': training_seconds, 'parameters': model.count_params(),
+    'pretrained': False, 'optimizer': 'Adam',
+    'learning_rate': LEARNING_RATE, 'max_epochs': 50,
+    'head_max_epochs': None, 'fine_tune_max_epochs': None,
+    'fine_tune_learning_rate': None, 'fine_tune_stage': None,
+    'early_stopping_patience': 8, 'selection_metric': 'val_f1_defect',
+    'tensorflow_version': tf.__version__, 'keras_version': tf.keras.__version__,
+}
+(RUN_DIR / 'run.json').write_text(json.dumps(run, indent=2))
+print('Saved:', RUN_DIR)
