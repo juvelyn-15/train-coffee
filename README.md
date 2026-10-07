@@ -19,6 +19,8 @@ Selects an image dataset, and the datasets must be different across groups. Usin
 
 The project classifies USK-Coffee images as normal (0) or defect (1).
 Normal combines longberry, peaberry and premium.
+The cleaned `data/` source directory has only `normal/` and `defect/` folders within each train/val/test split.
+Normal filenames preserve the original class as a prefix.
 Each model receives raw RGB 256x256 pixels and outputs a single sigmoid probability of defect.
 All models use binary cross-entropy and a fixed 0.5 decision threshold.
 
@@ -81,9 +83,13 @@ Run the full experiment grid: five models, four scenarios and three seeds.
 python run_experiments.py
 ```
 
-The fixed experiment grid is defined in `experiments.py`.
+The fixed experiment grid, augmentation flags and class weights are defined in `experiments.py`.
+Class weights use the verified training counts: 3599 normal and 1200 defect.
 The launcher starts a fresh process for every run and skips completed runs.
 The dataset is fixed and was checked once; training does not repeat data hashing, manifest generation or protocol checks.
+There is no separate preprocessing command.
+Training and evaluation call `data_loader.load_split()` directly and pass its arrays to `ImageDataGenerator.flow()`, following the supplied code templates.
+The loader creates disposable float32 memory-map caches on first use, while normalization remains inside each model and augmentation runs during training.
 Use a separate output directory when changing the experiment design.
 Training logs are saved beside each run's model.
 Individual training scripts can also be run directly.
@@ -93,8 +99,9 @@ EXPERIMENT=E3 SEED=42 python train_complex_cnn.py
 ```
 
 Training writes `best.keras`, `history.csv`, `run.json` and validation predictions.
-After every planned training run completes, `summarize_results.py` selects the model/scenario with the best mean validation F1-defect across seeds.
-Then `validate.py` evaluates the predeclared test rows and the summarizer produces the main table.
+After every planned training run completes, `select_model.py` selects the model/scenario with the best mean validation F1-defect across seeds.
+Then `validate.py` evaluates the predeclared test rows and `summarize_results.py` produces the main table.
+The summarizer requires every test run to be complete; it does not infer the pipeline stage from existing files.
 Test predictions do not feed back into model selection.
 
 ## Checks
@@ -105,7 +112,7 @@ python -m pytest tests/test_pipeline.py -q
 python -m ruff check *.py tests/test_pipeline.py
 ```
 
-The integration tests check raw-pixel preservation, sigmoid F1, safe model reload and memory-mapped batches.
+The integration tests check raw-pixel preservation, sigmoid F1, safe model reload, memory-mapped batches and validation-only selection through result summarization.
 
 ## Outputs
 

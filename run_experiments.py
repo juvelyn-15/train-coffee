@@ -1,6 +1,5 @@
 # Run each of the 60 approved experiments in a fresh Python process.
 import os
-
 import subprocess
 import sys
 from pathlib import Path
@@ -29,6 +28,6 @@ for run in RUNS:
     print('Completed:', run, flush=True)
 
 # Select using validation, then evaluate the fixed test runs.
-subprocess.run([sys.executable, 'summarize_results.py'], cwd=ROOT, env=env, check=True)
+subprocess.run([sys.executable, 'select_model.py'], cwd=ROOT, env=env, check=True)
 subprocess.run([sys.executable, 'validate.py'], cwd=ROOT, env=env, check=True)
 subprocess.run([sys.executable, 'summarize_results.py'], cwd=ROOT, env=env, check=True)

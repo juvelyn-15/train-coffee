@@ -18,8 +18,9 @@ from sklearn.metrics import (
 from tensorflow.keras.models import load_model
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 
+from data_loader import load_split
 from experiments import RUNS
-from preprocessing import DataPreprocessor
+from model_inputs import ResNet50Preprocessing
 
 ARTIFACTS_DIR = Path(__file__).resolve().parent / 'artifacts'
 
@@ -27,10 +28,8 @@ ARTIFACTS_DIR = Path(__file__).resolve().parent / 'artifacts'
 def calculate_metrics(labels, probabilities, threshold=0.5):
     labels = np.asarray(labels).astype(int).ravel()
     probabilities = np.asarray(probabilities).ravel()
-    if len(labels) != len(probabilities) or not np.isfinite(probabilities).all():
-        raise ValueError('Invalid prediction count or non-finite probabilities')
-    if np.any((probabilities < 0) | (probabilities > 1)):
-        raise ValueError('Sigmoid probabilities must lie in [0, 1]')
+    if not np.isfinite(probabilities).all():
+        raise ValueError('Non-finite probabilities')
     predictions = (probabilities > threshold).astype(int)
     return {
         'accuracy': float(accuracy_score(labels, predictions)),
@@ -52,11 +51,8 @@ if __name__ == '__main__':
                     for run in RUNS]
     else:
         raise SystemExit('Usage: python validate.py [run_directory]')
-    preprocessor = DataPreprocessor()
-    table = preprocessor.build_file_table()
-    test_table = table[table.split == 'test'][['relative_path', 'class_name', 'label']].reset_index(drop=True)
     # Saved models include normalization. Never divide these pixels by 255 here.
-    x_test, y_test = preprocessor.load_split(table, 'test', memory_map=True)
+    x_test, y_test, test_table = load_split('test')
     batches = ImageDataGenerator().flow(x_test, y_test, batch_size=16, shuffle=False)
     for run_dir in run_dirs:
         run = json.loads((run_dir / 'run.json').read_text())
@@ -64,7 +60,7 @@ if __name__ == '__main__':
             print('Already evaluated:', run_dir)
             continue
         tf.keras.backend.clear_session()
-        custom_objects = {}
+        custom_objects = {'coffee>ResNet50Preprocessing': ResNet50Preprocessing}
         if run['model'] == 'resnet18':
             import keras_hub
             custom_objects = {'ResNetBackbone': keras_hub.models.ResNetBackbone,

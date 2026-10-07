@@ -9,7 +9,17 @@ MODELS = {
     'resnet50': 'train_resnet50.py',
     'efficientnet_b4': 'train_efficientnet_b4.py',
 }
-EXPERIMENTS = ('E0', 'E1', 'E2', 'E3')
+# Fixed training counts in label order: normal=0, defect=1.
+TRAIN_COUNTS = (3599, 1200)
+CLASS_WEIGHTS = {label: sum(TRAIN_COUNTS) / (2 * count)
+                 for label, count in enumerate(TRAIN_COUNTS)}
+# Each scenario specifies (augmentation, class weights).
+EXPERIMENTS = {
+    'E0': (False, None),
+    'E1': (True, None),
+    'E2': (False, CLASS_WEIGHTS),
+    'E3': (True, CLASS_WEIGHTS),
+}
 SEEDS = (42, 43, 44)
-RUNS = [dict(model=model, experiment=experiment, seed=seed)
+RUNS = [{'model': model, 'experiment': experiment, 'seed': seed}
         for model, experiment, seed in product(MODELS, EXPERIMENTS, SEEDS)]

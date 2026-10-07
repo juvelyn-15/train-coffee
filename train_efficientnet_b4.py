@@ -1,11 +1,9 @@
 # 1. Import libraries
-import os
-
 import json
+import os
 import time
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import tensorflow as tf
 from tensorflow.keras.applications import EfficientNetB4
@@ -22,20 +20,17 @@ from tensorflow.keras.models import Sequential, load_model
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 
-from preprocessing import DataPreprocessor
+from data_loader import load_split
+from experiments import EXPERIMENTS, TRAIN_COUNTS
 
 # 2. Training settings
 MODEL_NAME = 'efficientnet_b4'
 EXPERIMENT = os.environ.get('EXPERIMENT', 'E0')
 SEED = int(os.environ.get('SEED', '42'))
 BATCH_SIZE = 16
-EPOCHS = 50
 LEARNING_RATE = 0.001
 THRESHOLD = 0.5
-USE_AUGMENTATION = EXPERIMENT in ('E1', 'E3')
-USE_CLASS_WEIGHT = EXPERIMENT in ('E2', 'E3')
-if EXPERIMENT not in ('E0', 'E1', 'E2', 'E3'):
-    raise ValueError('EXPERIMENT must be E0, E1, E2 or E3')
+USE_AUGMENTATION, class_weight = EXPERIMENTS[EXPERIMENT]
 
 tf.keras.utils.set_random_seed(SEED)
 tf.config.experimental.enable_op_determinism()
@@ -49,10 +44,8 @@ if (RUN_DIR / 'run.json').exists():
 RUN_DIR.mkdir(parents=True, exist_ok=True)
 
 # 3. Load data
-preprocessor = DataPreprocessor()
-file_table = preprocessor.build_file_table()
-x_train, y_train = preprocessor.load_split(file_table, 'train', memory_map=True)
-x_val, y_val = preprocessor.load_split(file_table, 'val', memory_map=True)
+x_train, y_train, _ = load_split('train')
+x_val, y_val, validation_metadata = load_split('val')
 print('Train:', x_train.shape, y_train.shape)
 print('Validation:', x_val.shape, y_val.shape)
 
@@ -77,11 +70,6 @@ train_generator = datagen.flow(
 val_generator = ImageDataGenerator().flow(
     x_val, y_val, batch_size=BATCH_SIZE, shuffle=False
 )
-counts = np.bincount(y_train.astype(int).ravel(), minlength=2)
-class_weight = None
-if USE_CLASS_WEIGHT:
-    class_weight = {label: len(y_train) / (2 * int(count))
-                    for label, count in enumerate(counts)}
 
 # 5. Build model with ImageNet pretrained EfficientNetB4
 
@@ -129,8 +117,6 @@ for layer in base_network.layers:
     layer.trainable = layer.name.startswith('block7')
     if isinstance(layer, BatchNormalization):
         layer.trainable = False
-if not base_network.trainable_weights:
-    raise ValueError('The selected fine-tuning stage has no trainable weights')
 
 # Changing trainable layers requires recompilation.
 model.compile(
@@ -160,7 +146,7 @@ model.jit_compile = False
 # Retain the selected weights and preprocessing without unused optimizer slots.
 model.save(RUN_DIR / 'best.keras')
 probabilities = model.predict(val_generator, verbose=0).ravel()
-validation_predictions = file_table[file_table.split == 'val'][['relative_path', 'class_name', 'label']].copy()
+validation_predictions = validation_metadata.copy()
 validation_predictions['p_defect'] = probabilities
 validation_predictions.to_csv(RUN_DIR / 'validation_predictions.csv', index=False)
 run = {
@@ -168,7 +154,7 @@ run = {
     'input_shape': [256, 256, 3], 'input_range': [0, 255],
     'threshold': THRESHOLD, 'batch_size': BATCH_SIZE,
     'augmentation': USE_AUGMENTATION, 'class_weights': class_weight,
-    'train_counts': counts.tolist(),
+    'train_counts': TRAIN_COUNTS,
     'best_epoch': int(history['val_f1_defect'].to_numpy().argmax()) + 1,
     'best_phase': str(history.iloc[history['val_f1_defect'].to_numpy().argmax()]['phase']),
     'best_validation_f1_defect': float(history['val_f1_defect'].max()), 'epochs_completed': len(history),
