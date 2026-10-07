@@ -9,7 +9,6 @@ import json
 import sys
 from pathlib import Path
 
-import keras_hub
 import numpy as np
 import tensorflow as tf
 from sklearn.metrics import (
@@ -24,14 +23,13 @@ from sklearn.metrics import (
 from tensorflow.keras.models import load_model
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 
+from experiments import RUNS
 from preprocessing import DataPreprocessor
 
 ARTIFACTS_DIR = Path(__file__).resolve().parent / 'artifacts'
-RESULTS_DIR = Path(__file__).resolve().parent / 'results'
 SMOKE_TEST = os.environ.get('SMOKE_TEST', '0') == '1'
 if SMOKE_TEST:
     ARTIFACTS_DIR = ARTIFACTS_DIR / 'smoke'
-    RESULTS_DIR = RESULTS_DIR / 'smoke'
 
 
 def calculate_metrics(labels, probabilities, threshold=0.5):
@@ -56,22 +54,16 @@ def calculate_metrics(labels, probabilities, threshold=0.5):
 if __name__ == '__main__':
     for gpu in tf.config.list_physical_devices('GPU'):
         tf.config.experimental.set_memory_growth(gpu, True)
-    # One explicit run directory, or all runs in the locked experiment protocol.
+    # One explicit run directory, or all runs in the fixed experiment grid.
     if len(sys.argv) == 2:
         run_dirs = [Path(sys.argv[1]).resolve()]
     elif len(sys.argv) == 1:
-        protocol = json.loads((RESULTS_DIR / 'protocol.json').read_text())
         run_dirs = [ARTIFACTS_DIR / run['model'] / run['experiment'] / f"seed_{run['seed']}"
-                    for run in protocol['runs']]
+                    for run in RUNS]
     else:
         raise SystemExit('Usage: python validate.py [run_directory]')
-    if not (RESULTS_DIR / 'selection.json').exists():
-        raise ValueError('Freeze validation selection with summarize_results.py before test evaluation')
-    protocol = json.loads((RESULTS_DIR / 'protocol.json').read_text())
     preprocessor = DataPreprocessor()
     table = preprocessor.build_file_table()
-    if preprocessor.fingerprint(table) != protocol['dataset_fingerprint']:
-        raise ValueError('Dataset changed after protocol lock')
     if SMOKE_TEST:
         table = table.groupby(['split', 'class_name'], sort=False).head(8)
     test_table = table[table.split == 'test'][['relative_path', 'class_name', 'label']].reset_index(drop=True)
@@ -80,21 +72,18 @@ if __name__ == '__main__':
     batches = ImageDataGenerator().flow(x_test, y_test, batch_size=16, shuffle=False)
     for run_dir in run_dirs:
         run = json.loads((run_dir / 'run.json').read_text())
-        if run['smoke_test'] != SMOKE_TEST or run['dataset_fingerprint'] != protocol['dataset_fingerprint']:
-            raise ValueError(f'Run does not belong to the locked dataset: {run_dir}')
         if (run_dir / 'metrics.json').exists():
             print('Already evaluated:', run_dir)
             continue
         tf.keras.backend.clear_session()
-        model = load_model(
-            run_dir / 'best.keras', compile=False,
-            custom_objects={'ResNetBackbone': keras_hub.models.ResNetBackbone,
-                            'ResNetImageConverter': keras_hub.layers.ResNetImageConverter},
-        )
+        custom_objects = {}
+        if run['model'] == 'resnet18':
+            import keras_hub
+            custom_objects = {'ResNetBackbone': keras_hub.models.ResNetBackbone,
+                              'ResNetImageConverter': keras_hub.layers.ResNetImageConverter}
+        model = load_model(run_dir / 'best.keras', compile=False, custom_objects=custom_objects)
         # Uncompiled reloads otherwise auto-enable GPU XLA for predict().
         model.jit_compile = False
-        if model.input_shape != (None, 256, 256, 3) or model.output_shape != (None, 1):
-            raise ValueError(f'Unexpected model input/output: {run_dir}')
         probabilities = model.predict(batches, verbose=0).ravel()
         predictions = test_table.copy()
         predictions['p_defect'] = probabilities

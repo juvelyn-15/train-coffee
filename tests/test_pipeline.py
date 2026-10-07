@@ -28,38 +28,19 @@ def dataset(tmp_path):
         for category in ('longberry', 'peaberry', 'premium', 'defect'):
             folder = tmp_path / split / category
             folder.mkdir(parents=True)
-            Image.fromarray(rng.integers(0, 256, (256, 256, 3), dtype=np.uint8)).save(folder / 'sample.png')
+            Image.fromarray(rng.integers(0, 256, (256, 256, 3), dtype=np.uint8)).save(folder / 'sample.jpg')
     return tmp_path
 
 
-def test_loader_preserves_raw_pixels_and_excludes_without_deleting(dataset):
-    excluded = dataset / 'train/peaberry/14.jpg'
-    Image.new('RGB', (256, 256), 'red').save(excluded)
+def test_loader_preserves_raw_pixels(dataset):
     loader = DataPreprocessor(dataset)
-    table = loader.build_file_table()
     train, validation, test = loader.preprocess()
-    assert excluded.exists()
-    assert 'train/peaberry/14.jpg' not in set(table.relative_path)
     for images, labels in (train, validation, test):
         assert images.dtype == np.uint8
         assert images.shape == (4, 256, 256, 3)
         assert labels.shape == (4, 1)
         assert labels.sum() == 1
         assert images.max() > 1
-
-
-def test_exact_cross_split_duplicate_stops_evaluation(dataset):
-    (dataset / 'test/defect/sample.png').write_bytes((dataset / 'train/defect/sample.png').read_bytes())
-    with pytest.raises(ValueError, match='Exact duplicates'):
-        DataPreprocessor(dataset).build_file_table()
-
-
-def test_bad_image_shape_reports_the_file(dataset):
-    path = dataset / 'val/defect/sample.png'
-    Image.new('RGB', (32, 32)).save(path)
-    loader = DataPreprocessor(dataset)
-    with pytest.raises(ValueError, match='256x256 RGB'):
-        loader.load_split(loader.build_file_table(), 'val')
 
 
 def test_sigmoid_metrics_match_whole_dataset_f1_and_fixed_threshold():

@@ -1,4 +1,4 @@
-# Summarize real runs and freeze model selection using validation only.
+# Summarize runs and select the best model using validation only.
 import os
 
 os.environ['KERAS_BACKEND'] = 'tensorflow'
@@ -15,21 +15,20 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from experiments import MODELS, EXPERIMENTS, RUNS, SMOKE_TEST
 from validate import calculate_metrics
 
 ROOT = Path(__file__).resolve().parent
 ARTIFACTS_DIR = ROOT / 'artifacts'
 RESULTS_DIR = ROOT / 'results'
-if os.environ.get('SMOKE_TEST', '0') == '1':
+if SMOKE_TEST:
     ARTIFACTS_DIR = ARTIFACTS_DIR / 'smoke'
     RESULTS_DIR = RESULTS_DIR / 'smoke'
-protocol = json.loads((RESULTS_DIR / 'protocol.json').read_text())
+RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 rows = []
-for item in protocol['runs']:
+for item in RUNS:
     run_dir = ARTIFACTS_DIR / item['model'] / item['experiment'] / f"seed_{item['seed']}"
     run = json.loads((run_dir / 'run.json').read_text())
-    if run['dataset_fingerprint'] != protocol['dataset_fingerprint']:
-        raise ValueError(f'Dataset mismatch: {run_dir}')
     predictions = pd.read_csv(run_dir / 'validation_predictions.csv')
     val_metrics = calculate_metrics(predictions.label, predictions.p_defect, run['threshold'])
     row = {**item, 'validation_f1_defect': val_metrics['f1_defect'],
@@ -47,16 +46,11 @@ validation.to_csv(RESULTS_DIR / 'validation_summary.csv', index=False)
 best = validation.sort_values(['mean', 'model', 'experiment'], ascending=[False, True, True]).iloc[0]
 selection = {'model': str(best.model), 'experiment': str(best.experiment),
              'mean_validation_f1_defect': float(best['mean']), 'threshold': 0.5,
-             'dataset_fingerprint': protocol['dataset_fingerprint'],
-             'smoke_test': protocol['smoke_test'],
+             'smoke_test': SMOKE_TEST,
              'tie_break': 'model name, then experiment ID',
              'decision_data': 'validation only'}
 selection_path = RESULTS_DIR / 'selection.json'
-if selection_path.exists():
-    if json.loads(selection_path.read_text()) != selection:
-        raise ValueError('The frozen validation selection changed')
-else:
-    selection_path.write_text(json.dumps(selection, indent=2))
+selection_path.write_text(json.dumps(selection, indent=2))
 print('Validation selection:', selection)
 
 if 'f1_defect' in runs:
@@ -65,8 +59,8 @@ if 'f1_defect' in runs:
     columns = ['accuracy', 'balanced_accuracy', 'precision_defect', 'recall_defect',
                'f1_defect', 'average_precision_defect']
     grouped = runs.groupby(['model', 'experiment'])[columns].agg(['mean', 'std'])
-    model_order = list(dict.fromkeys(run['model'] for run in protocol['runs']))
-    experiment_order = list(dict.fromkeys(run['experiment'] for run in protocol['runs']))
+    model_order = list(MODELS)
+    experiment_order = list(EXPERIMENTS)
     grouped = grouped.reindex(pd.MultiIndex.from_product(
         [model_order, experiment_order], names=['model', 'experiment']))
     grouped.columns = ['_'.join(column) for column in grouped.columns]
@@ -75,7 +69,7 @@ if 'f1_defect' in runs:
     for column in columns:
         display[column] = [f'{mean:.4f} +/- {std:.4f}'
                            for mean, std in zip(grouped[column + '_mean'], grouped[column + '_std'])]
-    title = '# Smoke check results (not full experiments)' if protocol['smoke_test'] else '# Experiment results'
+    title = '# Smoke check results (not full experiments)' if SMOKE_TEST else '# Experiment results'
     lines = [title, '',
              'Generated from measured test predictions after validation selection.', '',
              '| Model | Experiment | Accuracy | Balanced accuracy | Precision-defect | Recall-defect | F1-defect |',
@@ -85,7 +79,7 @@ if 'f1_defect' in runs:
     (RESULTS_DIR / 'experiment_summary.md').write_text('\n'.join(lines) + '\n')
     figures_dir = RESULTS_DIR / 'figures'
     figures_dir.mkdir(exist_ok=True)
-    for item in protocol['runs']:
+    for item in RUNS:
         run_dir = ARTIFACTS_DIR / item['model'] / item['experiment'] / f"seed_{item['seed']}"
         stem = f"{item['model']}_{item['experiment']}_seed_{item['seed']}"
         history = pd.read_csv(run_dir / 'history.csv')

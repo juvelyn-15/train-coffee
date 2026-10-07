@@ -80,8 +80,10 @@ SMOKE_TEST=1 .venv/bin/python run_experiments.py
 .venv/bin/python run_experiments.py
 ```
 
-The launcher records the source hashes and dataset fingerprint, starts a fresh process for every run and resumes by skipping completed runs.
-An incompatible existing protocol stops execution rather than mixing experiments.
+The fixed experiment grid is defined in `experiments.py`.
+The launcher starts a fresh process for every run and skips completed runs.
+The dataset is fixed and was checked once; training does not repeat data hashing, manifest generation or protocol checks.
+Use a separate output directory when changing the experiment design.
 Training logs are saved beside each run's model.
 Individual training scripts can also be run directly.
 
@@ -90,7 +92,7 @@ EXPERIMENT=E3 SEED=42 .venv/bin/python train_complex_cnn.py
 ```
 
 Training writes `best.keras`, `history.csv`, `run.json` and validation predictions.
-After every planned training run completes, `summarize_results.py` freezes the model/scenario with the best mean validation F1-defect across seeds.
+After every planned training run completes, `summarize_results.py` selects the model/scenario with the best mean validation F1-defect across seeds.
 Then `validate.py` evaluates the predeclared test rows and the summarizer produces the main table.
 Test predictions do not feed back into model selection.
 
@@ -101,7 +103,7 @@ Test predictions do not feed back into model selection.
 .venv/bin/ruff check *.py tests/test_pipeline.py
 ```
 
-The integration tests check non-destructive filtering, raw-pixel preservation, malformed images, duplicate leakage, sigmoid F1, safe model reload and memory-mapped batches.
+The integration tests check raw-pixel preservation, sigmoid F1, safe model reload and memory-mapped batches.
 
 ## Outputs
 

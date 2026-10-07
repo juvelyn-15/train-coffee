@@ -1,4 +1,3 @@
-from hashlib import sha256
 from pathlib import Path
 
 import numpy as np
@@ -22,71 +21,38 @@ class DataPreprocessor:
     SPLITS = ('train', 'val', 'test')
     NORMAL_CLASSES = ('longberry', 'peaberry', 'premium')
     DEFECT_CLASS = 'defect'
-    IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.bmp')
-    DUPLICATE_PATHS = frozenset({'train/peaberry/14.jpg', 'test/peaberry/1916.jpg'})
 
     def __init__(self, data_dir=None):
         self.data_dir = Path(data_dir) if data_dir else self.DATA_DIR
 
     def build_file_table(self):
         rows = []
-        classes = (*self.NORMAL_CLASSES, self.DEFECT_CLASS)
         for split in self.SPLITS:
-            split_dir = self.data_dir / split
-            if not split_dir.is_dir():
-                raise FileNotFoundError(f'Missing split: {split_dir}')
-            unexpected = {p.name for p in split_dir.iterdir() if p.is_dir()} - set(classes)
-            if unexpected:
-                raise ValueError(f'Unexpected classes in {split}: {unexpected}')
-            for class_name in classes:
-                class_dir = split_dir / class_name
-                if not class_dir.is_dir():
-                    raise FileNotFoundError(f'Missing class: {class_dir}')
-                for path in sorted(class_dir.iterdir()):
-                    if path.suffix.lower() not in self.IMAGE_EXTENSIONS:
-                        continue
-                    relative_path = path.relative_to(self.data_dir).as_posix()
-                    if relative_path in self.DUPLICATE_PATHS:
-                        continue
+            for class_name in (*self.NORMAL_CLASSES, self.DEFECT_CLASS):
+                for path in sorted((self.data_dir / split / class_name).glob('*.jpg')):
                     rows.append({
-                        'path': str(path), 'relative_path': relative_path,
+                        'path': str(path),
+                        'relative_path': path.relative_to(self.data_dir).as_posix(),
                         'split': split, 'class_name': class_name,
                         'label': int(class_name == self.DEFECT_CLASS),
-                        'sha256': sha256(path.read_bytes()).hexdigest(),
                     })
-        table = pd.DataFrame(rows)
-        if table.empty:
-            raise ValueError('Dataset contains no images')
-        duplicated = table[table.duplicated('sha256', keep=False)]
-        if not duplicated.empty:
-            raise ValueError('Exact duplicates require review: ' + ', '.join(duplicated.relative_path))
-        for split in self.SPLITS:
-            if set(table.loc[table.split == split, 'label']) != {0, 1}:
-                raise ValueError(f'{split} must contain normal and defect images')
-        return table
-
-    @staticmethod
-    def fingerprint(table):
-        manifest = table[['relative_path', 'split', 'label', 'sha256']].to_csv(index=False)
-        return sha256(manifest.encode()).hexdigest()
+        return pd.DataFrame(rows)
 
     @staticmethod
     def load_rgb(path):
         with Image.open(path) as image:
-            if image.mode != 'RGB' or image.size != (256, 256):
-                raise ValueError(f'Expected 256x256 RGB: {path}; got {image.size}, {image.mode}')
             return np.asarray(image, dtype=np.uint8)
 
     def load_split(self, table, split, memory_map=False):
         part = table[table.split == split]
-        if part.empty:
-            raise ValueError(f'Empty split: {split}')
         if memory_map:
             # ImageDataGenerator otherwise copies the entire uint8 dataset to float32.
             # A read-only disk-backed array keeps the same raw pixel values.
-            cache_dir = Path(__file__).resolve().parent / 'artifacts' / 'data_cache'
+            cache_root = Path(__file__).resolve().parent / 'artifacts' if self.data_dir == self.DATA_DIR else self.data_dir
+            cache_dir = cache_root / 'data_cache'
             cache_dir.mkdir(parents=True, exist_ok=True)
-            cache_path = cache_dir / f'{self.fingerprint(table)}_{split}.npy'
+            # The dataset is fixed; the row count separates full and smoke subsets.
+            cache_path = cache_dir / f'{split}_{len(part)}.npy'
             if not cache_path.exists():
                 import os
                 temporary_path = cache_path.with_suffix(f'.{os.getpid()}.tmp')

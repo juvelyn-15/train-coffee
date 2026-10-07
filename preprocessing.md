@@ -12,14 +12,17 @@ The [authors' dataset page](https://coffee.comvislab-usk.org/) explicitly suppor
 These counts describe the local dataset after the two previously documented duplicate paths were removed.
 The EDA notebook's stored outputs describe the original 8000 files and must not be treated as current counts.
 
-## Cleaning and manifest
+## Fixed dataset
 
-`DataPreprocessor.build_file_table()` preserves the existing train/val/test folders and creates a deterministic manifest containing paths, original classes, binary labels and SHA-256 hashes.
-Unexpected or missing class folders, empty binary splits and exact duplicates stop the workflow for review.
-`train/peaberry/14.jpg` and `test/peaberry/1916.jpg` are excluded if present, without deleting either file.
-Both paths are absent in the current local dataset.
-A manifest fingerprint identifies the exact files used by every experiment.
-The experiment launcher saves that manifest and freezes its fingerprint before training.
+The dataset will not change or receive additional images.
+A one-time inspection decoded all 7998 JPEG files successfully as 256x256 RGB.
+No exact file duplicates or identical decoded pixel arrays were found.
+The split counts are listed above.
+The two previously removed paths, `train/peaberry/14.jpg` and `test/peaberry/1916.jpg`, are absent.
+
+`DataPreprocessor.build_file_table()` lists the existing JPEG files in deterministic order and maps defect to 1 and the other three classes to 0.
+It does not repeat folder, class, duplicate or image-shape validation during training.
+Dataset fingerprints, exported manifests and protocol locks are unnecessary for this fixed dataset and are no longer generated.
 
 The original notebook identified a visually similar train/test pair even though its file hashes differed.
 SHA-256 detects exact file duplicates, not acquisition-level dependence or visually similar images with different encodings.
@@ -31,12 +34,13 @@ No bean-instance identifiers are available to prove independence at the physical
 ## Image and label contract
 
 `load_split()` returns RGB `uint8` arrays of shape `(N, 256, 256, 3)` in `[0,255]` and float binary labels of shape `(N,1)`.
-Images with a different size or color mode raise an explicit error.
-All 7998 current files were decoded successfully as 256x256 RGB during inspection.
 
 Training and evaluation request a read-only float32 memory map of the same raw pixel values.
 This avoids ImageDataGenerator creating a second full float32 copy in RAM on this 16 GB machine.
-Caches are keyed by the content manifest fingerprint and written atomically under `artifacts/data_cache/`.
+Caches are named by split and row count and written atomically under `artifacts/data_cache/`.
+The row count separates the full dataset from the fixed smoke subset.
+Existing hash-named caches are ignored; the first run creates the new caches.
+Temporary test datasets keep their caches under their own dataset directory.
 
 Normalization is saved inside each model and applies to train, validation, test and inference.
 Simple and complex CNNs use `Rescaling(1/255)`.

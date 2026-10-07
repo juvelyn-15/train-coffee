@@ -59,9 +59,6 @@ RUN_DIR.mkdir(parents=True, exist_ok=True)
 # 3. Load data
 preprocessor = DataPreprocessor()
 file_table = preprocessor.build_file_table()
-dataset_fingerprint = preprocessor.fingerprint(file_table)
-if os.environ.get('DATASET_FINGERPRINT', dataset_fingerprint) != dataset_fingerprint:
-    raise ValueError('Dataset changed after the experiment protocol was locked')
 if SMOKE_TEST:
     file_table = file_table.groupby(['split', 'class_name'], sort=False).head(8)
 x_train, y_train = preprocessor.load_split(file_table, 'train', memory_map=True)
@@ -180,7 +177,7 @@ validation_predictions['p_defect'] = probabilities
 validation_predictions.to_csv(RUN_DIR / 'validation_predictions.csv', index=False)
 run = {
     'model': MODEL_NAME, 'experiment': EXPERIMENT, 'seed': SEED,
-    'smoke_test': SMOKE_TEST, 'dataset_fingerprint': dataset_fingerprint,
+    'smoke_test': SMOKE_TEST,
     'input_shape': [256, 256, 3], 'input_range': [0, 255],
     'threshold': THRESHOLD, 'batch_size': BATCH_SIZE,
     'augmentation': USE_AUGMENTATION, 'class_weights': class_weight,
