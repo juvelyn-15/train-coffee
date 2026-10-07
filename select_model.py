@@ -29,4 +29,3 @@ selection = {'model': str(best.model), 'experiment': str(best.experiment),
 selection_path = RESULTS_DIR / 'selection.json'
 selection_path.write_text(json.dumps(selection, indent=2))
 print('Validation selection:', selection)
-
