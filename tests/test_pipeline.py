@@ -1,11 +1,6 @@
-import os
 import sys
 from pathlib import Path
 
-os.environ['KERAS_BACKEND'] = 'tensorflow'
-os.environ.setdefault('TF_FORCE_GPU_ALLOW_GROWTH', 'true')
-os.environ.setdefault('TF_NUM_INTRAOP_THREADS', '2')
-os.environ.setdefault('TF_NUM_INTEROP_THREADS', '2')
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np

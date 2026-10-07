@@ -36,9 +36,8 @@ No bean-instance identifiers are available to prove independence at the physical
 `load_split()` returns RGB `uint8` arrays of shape `(N, 256, 256, 3)` in `[0,255]` and float binary labels of shape `(N,1)`.
 
 Training and evaluation request a read-only float32 memory map of the same raw pixel values.
-This avoids ImageDataGenerator creating a second full float32 copy in RAM on this 16 GB machine.
+This avoids ImageDataGenerator creating a second full float32 copy in RAM.
 Caches are named by split and row count and written atomically under `artifacts/data_cache/`.
-The row count separates the full dataset from the fixed smoke subset.
 Existing hash-named caches are ignored; the first run creates the new caches.
 Temporary test datasets keep their caches under their own dataset directory.
 

@@ -1,9 +1,4 @@
 # Summarize runs and select the best model using validation only.
-import os
-
-os.environ['KERAS_BACKEND'] = 'tensorflow'
-os.environ.setdefault('TF_NUM_INTRAOP_THREADS', '4')
-os.environ.setdefault('TF_NUM_INTEROP_THREADS', '2')
 
 import json
 from pathlib import Path
@@ -15,15 +10,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from experiments import MODELS, EXPERIMENTS, RUNS, SMOKE_TEST
+from experiments import MODELS, EXPERIMENTS, RUNS
 from validate import calculate_metrics
 
 ROOT = Path(__file__).resolve().parent
 ARTIFACTS_DIR = ROOT / 'artifacts'
 RESULTS_DIR = ROOT / 'results'
-if SMOKE_TEST:
-    ARTIFACTS_DIR = ARTIFACTS_DIR / 'smoke'
-    RESULTS_DIR = RESULTS_DIR / 'smoke'
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 rows = []
 for item in RUNS:
@@ -46,8 +38,7 @@ validation.to_csv(RESULTS_DIR / 'validation_summary.csv', index=False)
 best = validation.sort_values(['mean', 'model', 'experiment'], ascending=[False, True, True]).iloc[0]
 selection = {'model': str(best.model), 'experiment': str(best.experiment),
              'mean_validation_f1_defect': float(best['mean']), 'threshold': 0.5,
-             'smoke_test': SMOKE_TEST,
-             'tie_break': 'model name, then experiment ID',
+                      'tie_break': 'model name, then experiment ID',
              'decision_data': 'validation only'}
 selection_path = RESULTS_DIR / 'selection.json'
 selection_path.write_text(json.dumps(selection, indent=2))
@@ -69,7 +60,7 @@ if 'f1_defect' in runs:
     for column in columns:
         display[column] = [f'{mean:.4f} +/- {std:.4f}'
                            for mean, std in zip(grouped[column + '_mean'], grouped[column + '_std'])]
-    title = '# Smoke check results (not full experiments)' if SMOKE_TEST else '# Experiment results'
+    title = '# Experiment results'
     lines = [title, '',
              'Generated from measured test predictions after validation selection.', '',
              '| Model | Experiment | Accuracy | Balanced accuracy | Precision-defect | Recall-defect | F1-defect |',

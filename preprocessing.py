@@ -51,7 +51,7 @@ class DataPreprocessor:
             cache_root = Path(__file__).resolve().parent / 'artifacts' if self.data_dir == self.DATA_DIR else self.data_dir
             cache_dir = cache_root / 'data_cache'
             cache_dir.mkdir(parents=True, exist_ok=True)
-            # The dataset is fixed; the row count separates full and smoke subsets.
+            # The dataset is fixed; reuse the cache for this split and row count.
             cache_path = cache_dir / f'{split}_{len(part)}.npy'
             if not cache_path.exists():
                 import os

@@ -59,25 +59,26 @@ The main classification metrics use unweighted predictions at the fixed threshol
 
 ## Setup and execution
 
-Use Python 3.13 and an isolated project environment.
-The Linux requirements include TensorFlow CUDA libraries; the NVIDIA driver must be installed on the host.
-`requirements.lock.txt` records the exact installed environment, while `requirements.txt` lists the direct dependencies.
-`setup_gpu.sh` exposes the environment CUDA library directories to the dynamic loader, following the [TensorFlow GPU setup guidance](https://www.tensorflow.org/install/pip).
+Create an isolated environment with a Python version supported by TensorFlow on your platform.
+Install the project dependencies from `requirements.txt`.
+TensorFlow manages its Keras and serialization dependencies; CUDA libraries are not included in the project requirements.
 
 ```bash
 python -m venv .venv
-.venv/bin/python -m pip install -r requirements.lock.txt
-source ./setup_gpu.sh
-.venv/bin/python -c "import tensorflow as tf; print(tf.config.list_physical_devices('GPU'))"
+# Activate the environment using the command appropriate for your shell.
+python -m pip install -r requirements.txt
 ```
 
-Run the integration sweep before the complete experiments.
-It exercises every model and E0-E3 on a small subset, including both transfer phases.
-Its results are isolated under `artifacts/smoke` and `results/smoke`.
+Configure GPU drivers, acceleration packages and TensorFlow hardware settings locally according to the [TensorFlow installation guide](https://www.tensorflow.org/install/pip).
+The scripts do not set CPU thread counts or GPU memory allocation policy.
+For example, Linux or WSL2 users with NVIDIA GPUs can install `tensorflow[and-cuda]` in their environment.
+Seed and deterministic operations remain enabled for repeatable experiments.
+Dependencies are resolved at installation time; record the installed versions alongside reported experiment results.
+
+Run the full experiment grid: five models, four scenarios and three seeds.
 
 ```bash
-SMOKE_TEST=1 .venv/bin/python run_experiments.py
-.venv/bin/python run_experiments.py
+python run_experiments.py
 ```
 
 The fixed experiment grid is defined in `experiments.py`.
@@ -88,7 +89,7 @@ Training logs are saved beside each run's model.
 Individual training scripts can also be run directly.
 
 ```bash
-EXPERIMENT=E3 SEED=42 .venv/bin/python train_complex_cnn.py
+EXPERIMENT=E3 SEED=42 python train_complex_cnn.py
 ```
 
 Training writes `best.keras`, `history.csv`, `run.json` and validation predictions.
@@ -99,8 +100,9 @@ Test predictions do not feed back into model selection.
 ## Checks
 
 ```bash
-.venv/bin/python -m pytest tests/test_pipeline.py -q
-.venv/bin/ruff check *.py tests/test_pipeline.py
+python -m pip install pytest ruff
+python -m pytest tests/test_pipeline.py -q
+python -m ruff check *.py tests/test_pipeline.py
 ```
 
 The integration tests check raw-pixel preservation, sigmoid F1, safe model reload and memory-mapped batches.

@@ -1,10 +1,6 @@
 # 1. Import libraries
 import os
 
-os.environ['KERAS_BACKEND'] = 'tensorflow'
-os.environ.setdefault('TF_NUM_INTRAOP_THREADS', '4')
-os.environ.setdefault('TF_NUM_INTEROP_THREADS', '2')
-
 import json
 import time
 from pathlib import Path
@@ -32,7 +28,6 @@ from preprocessing import DataPreprocessor, ResNet50Preprocessing
 MODEL_NAME = 'resnet50'
 EXPERIMENT = os.environ.get('EXPERIMENT', 'E0')
 SEED = int(os.environ.get('SEED', '42'))
-SMOKE_TEST = os.environ.get('SMOKE_TEST', '0') == '1'
 BATCH_SIZE = 16
 EPOCHS = 50
 LEARNING_RATE = 0.001
@@ -44,12 +39,8 @@ if EXPERIMENT not in ('E0', 'E1', 'E2', 'E3'):
 
 tf.keras.utils.set_random_seed(SEED)
 tf.config.experimental.enable_op_determinism()
-for gpu in tf.config.list_physical_devices('GPU'):
-    tf.config.experimental.set_memory_growth(gpu, True)
 
 ARTIFACTS_DIR = Path(__file__).resolve().parent / 'artifacts'
-if SMOKE_TEST:
-    ARTIFACTS_DIR = ARTIFACTS_DIR / 'smoke'
 RUN_DIR = ARTIFACTS_DIR / MODEL_NAME / EXPERIMENT / f'seed_{SEED}'
 if (RUN_DIR / 'run.json').exists():
     raise ValueError(f'Completed run already exists: {RUN_DIR}')
@@ -58,8 +49,6 @@ RUN_DIR.mkdir(parents=True, exist_ok=True)
 # 3. Load data
 preprocessor = DataPreprocessor()
 file_table = preprocessor.build_file_table()
-if SMOKE_TEST:
-    file_table = file_table.groupby(['split', 'class_name'], sort=False).head(8)
 x_train, y_train = preprocessor.load_split(file_table, 'train', memory_map=True)
 x_val, y_val = preprocessor.load_split(file_table, 'val', memory_map=True)
 print('Train:', x_train.shape, y_train.shape)
@@ -126,7 +115,7 @@ start_time = time.monotonic()
 # 7. Train the new head, then fine-tune the last backbone stage.
 H = model.fit(
     train_generator, validation_data=val_generator,
-    epochs=1 if SMOKE_TEST else 10,
+    epochs=10,
     class_weight=class_weight, callbacks=[checkpoint], verbose=2,
 )
 history_head = pd.DataFrame(H.history)
@@ -152,7 +141,7 @@ model.compile(
 )
 H_finetune = model.fit(
     train_generator, validation_data=val_generator,
-    epochs=1 if SMOKE_TEST else 40,
+    epochs=40,
     class_weight=class_weight, callbacks=[checkpoint, early_stopping], verbose=2,
 )
 history_finetune = pd.DataFrame(H_finetune.history)
@@ -173,7 +162,6 @@ validation_predictions['p_defect'] = probabilities
 validation_predictions.to_csv(RUN_DIR / 'validation_predictions.csv', index=False)
 run = {
     'model': MODEL_NAME, 'experiment': EXPERIMENT, 'seed': SEED,
-    'smoke_test': SMOKE_TEST,
     'input_shape': [256, 256, 3], 'input_range': [0, 255],
     'threshold': THRESHOLD, 'batch_size': BATCH_SIZE,
     'augmentation': USE_AUGMENTATION, 'class_weights': class_weight,

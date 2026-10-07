@@ -1,9 +1,4 @@
 # Evaluate saved sigmoid models using raw RGB images.
-import os
-
-os.environ['KERAS_BACKEND'] = 'tensorflow'
-os.environ.setdefault('TF_NUM_INTRAOP_THREADS', '4')
-os.environ.setdefault('TF_NUM_INTEROP_THREADS', '2')
 
 import json
 import sys
@@ -27,9 +22,6 @@ from experiments import RUNS
 from preprocessing import DataPreprocessor
 
 ARTIFACTS_DIR = Path(__file__).resolve().parent / 'artifacts'
-SMOKE_TEST = os.environ.get('SMOKE_TEST', '0') == '1'
-if SMOKE_TEST:
-    ARTIFACTS_DIR = ARTIFACTS_DIR / 'smoke'
 
 
 def calculate_metrics(labels, probabilities, threshold=0.5):
@@ -52,8 +44,6 @@ def calculate_metrics(labels, probabilities, threshold=0.5):
 
 
 if __name__ == '__main__':
-    for gpu in tf.config.list_physical_devices('GPU'):
-        tf.config.experimental.set_memory_growth(gpu, True)
     # One explicit run directory, or all runs in the fixed experiment grid.
     if len(sys.argv) == 2:
         run_dirs = [Path(sys.argv[1]).resolve()]
@@ -64,8 +54,6 @@ if __name__ == '__main__':
         raise SystemExit('Usage: python validate.py [run_directory]')
     preprocessor = DataPreprocessor()
     table = preprocessor.build_file_table()
-    if SMOKE_TEST:
-        table = table.groupby(['split', 'class_name'], sort=False).head(8)
     test_table = table[table.split == 'test'][['relative_path', 'class_name', 'label']].reset_index(drop=True)
     # Saved models include normalization. Never divide these pixels by 255 here.
     x_test, y_test = preprocessor.load_split(table, 'test', memory_map=True)

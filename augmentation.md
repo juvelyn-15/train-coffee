@@ -48,4 +48,3 @@ Each experiment starts a fresh model with seed 42, 43 or 44.
 Model initialization, random generators and TensorFlow operations share the selected seed.
 TensorFlow deterministic operations are enabled.
 Three-seed standard deviation measures training variability on the same fixed split, not uncertainty across new datasets.
-Smoke checks use separate artifact directories and a small subset, and cannot populate the final experiment table.

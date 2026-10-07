@@ -1,22 +1,15 @@
 # Run each of the 60 approved experiments in a fresh Python process.
 import os
 
-os.environ['KERAS_BACKEND'] = 'tensorflow'
-os.environ.setdefault('TF_NUM_INTRAOP_THREADS', '4')
-os.environ.setdefault('TF_NUM_INTEROP_THREADS', '2')
-
 import subprocess
 import sys
 from pathlib import Path
 
-from experiments import MODELS, RUNS, SMOKE_TEST
+from experiments import MODELS, RUNS
 
 ROOT = Path(__file__).resolve().parent
 ARTIFACTS_DIR = ROOT / 'artifacts'
 RESULTS_DIR = ROOT / 'results'
-if SMOKE_TEST:
-    ARTIFACTS_DIR = ARTIFACTS_DIR / 'smoke'
-    RESULTS_DIR = RESULTS_DIR / 'smoke'
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 env = os.environ.copy()
