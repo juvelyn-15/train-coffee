@@ -32,7 +32,7 @@ MODEL_NAME = 'complex_cnn'
 EXPERIMENT = os.environ.get('EXPERIMENT', 'E0')
 SEED = int(os.environ.get('SEED', '42'))
 SAMPLING = os.environ.get('SAMPLING', 'none')
-BATCH_SIZE = 16
+BATCH_SIZE = 32
 EPOCHS = 50
 LEARNING_RATE = 0.0003
 WEIGHT_DECAY = 0.0001
@@ -131,28 +131,30 @@ def vgg_block(num_convs, num_filters):
     if BLOCK_DROPOUT > 0:
         block.add(SpatialDropout2D(BLOCK_DROPOUT))
     return block
+#2 gpu
+strategy = tf.distribute.MirroredStrategy()
+print("Number of GPUs:", strategy.num_replicas_in_sync)
+with strategy.scope():
+    model = Sequential()
+    model.add(Input(shape=x_train.shape[1:]))
+    model.add(Rescaling(1.0 / 255))
+    conv_arch = ((2, 32), (2, 64), (2, 128), (2, 256))
+    for num_convs, num_filters in conv_arch:
+        model.add(vgg_block(num_convs, num_filters))
+    model.add(GlobalAveragePooling2D())
+    model.add(Dense(128, activation='relu', kernel_regularizer=l2(WEIGHT_DECAY)))
+    model.add(Dropout(HEAD_DROPOUT))
+    model.add(Dense(1, activation='sigmoid'))
 
-
-model = Sequential()
-model.add(Input(shape=x_train.shape[1:]))
-model.add(Rescaling(1.0 / 255))
-conv_arch = ((2, 32), (2, 64), (2, 128), (2, 256))
-for num_convs, num_filters in conv_arch:
-    model.add(vgg_block(num_convs, num_filters))
-model.add(GlobalAveragePooling2D())
-model.add(Dense(128, activation='relu', kernel_regularizer=l2(WEIGHT_DECAY)))
-model.add(Dropout(HEAD_DROPOUT))
-model.add(Dense(1, activation='sigmoid'))
-
-model.compile(
-    optimizer=Adam(learning_rate=LEARNING_RATE),
-    loss='binary_crossentropy',
-    jit_compile=False,
-    metrics=[BinaryAccuracy(name='accuracy', threshold=THRESHOLD),
-             Precision(name='precision_defect', thresholds=THRESHOLD),
-             Recall(name='recall_defect', thresholds=THRESHOLD),
-             F1Score(name='f1_defect', threshold=THRESHOLD, average='micro')],
-)
+    model.compile(
+        optimizer=Adam(learning_rate=LEARNING_RATE),
+        loss='binary_crossentropy',
+        jit_compile=False,
+        metrics=[BinaryAccuracy(name='accuracy', threshold=THRESHOLD),
+                Precision(name='precision_defect', thresholds=THRESHOLD),
+                Recall(name='recall_defect', thresholds=THRESHOLD),
+                F1Score(name='f1_defect', threshold=THRESHOLD, average='micro')],
+    )
 checkpoint = ModelCheckpoint(
     RUN_DIR / 'best.keras', monitor='val_f1_defect', mode='max', save_best_only=True
 )
