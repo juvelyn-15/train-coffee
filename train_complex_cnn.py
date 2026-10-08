@@ -28,7 +28,7 @@ from tensorflow.keras.regularizers import l2
 from data_loader import load_split
 from experiments import EXPERIMENTS, TRAIN_COUNTS
 
-MODEL_NAME = 'complex_cnn'
+MODEL_NAME = 'complex_cnn_2'
 EXPERIMENT = os.environ.get('EXPERIMENT', 'E0')
 SEED = int(os.environ.get('SEED', '42'))
 SAMPLING = os.environ.get('SAMPLING', 'none')
