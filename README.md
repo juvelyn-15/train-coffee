@@ -59,6 +59,38 @@ Early stopping monitors validation F1-defect with patience 8 for custom CNNs and
 The saved checkpoint has the highest validation F1-defect across the complete run, including both transfer phases.
 The main classification metrics use unweighted predictions at the fixed threshold.
 
+## EfficientNet regularization comparison
+
+The original EfficientNetB4 protocol remains the `baseline` variant: Dropout 0.5, fine-tuning of `block7` for up to 40 epochs at learning rate 0.00001, and frozen batch normalization.
+The `regularized` variant keeps the same data, head and fine-tuning stage, but uses Dropout 0.6, up to 20 fine-tuning epochs and learning rate 0.000005.
+The controlled comparison uses E3 (augmentation and class weights enabled) with seeds 42, 43 and 44.
+Run `python run_efficientnet_comparison.py`, then `python compare_efficientnet_e3.py` to select by mean validation F1-defect.
+Run `python validate_efficientnet_e3.py` only after selection to evaluate the selected variant on the fixed test split.
+
+## EfficientNetB4 v2
+
+`train_efficientnet_b4_v2.py` is a standalone regularized version. It uses a BatchNormalization-Dense128-L2-Dropout head, AdamW, ReduceLROnPlateau and fine-tunes `block6+block7` with frozen backbone batch normalization.
+The local runner trains E3 for seeds 42, 43 and 44, evaluates each best validation checkpoint on test, and writes mean/std summaries:
+
+```bash
+python run_efficientnet_b4_v2.py
+```
+
+The matching Kaggle notebook is `kaggle_efficientnet_transfer_learning_v2.ipynb`; it runs all three seeds in one notebook and saves outputs under `/kaggle/working/efficientnet_b4_v2_seed_<seed>/`.
+
+## EfficientNetB4 v3 full experiment grid
+
+Version 3 uses progressive fine-tuning: head, then `block7`, then `block6+block7`, with AdamW, L2 regularization, Dropout and ReduceLROnPlateau.
+It runs all four E0-E3 scenarios and seeds 42, 43 and 44 (12 runs total):
+
+```bash
+python run_efficientnet_b4_v3.py
+```
+
+The local artifacts are saved under `artifacts/efficientnet_b4_v3/<experiment>/seed_<seed>/`.
+The matching Kaggle notebook is `kaggle_efficientnet_transfer_learning_v3.ipynb`; its `/kaggle/working/efficientnet_b4_v3_output/` contains matching `artifacts/` and `results/` directories.
+Validation summary selects one experiment before `evaluate_efficientnet_b4_v3.py` evaluates its three test runs.
+
 ## Setup and execution
 
 Create an isolated environment with a Python version supported by TensorFlow on your platform.
