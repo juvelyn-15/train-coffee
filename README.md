@@ -27,7 +27,7 @@ All models use binary cross-entropy and a fixed 0.5 decision threshold.
 | Model | Architecture | Initialization |
 |---|---|---|
 | Simple CNN | Conv16-Pool, Conv32-Pool, Conv64-Pool, GAP, Dense128, Dropout0.5, sigmoid | Random |
-| Complex CNN | Four VGG blocks, two Conv-BN-ReLU sequences each, filters 32/64/128/256, Pool and Dropout0.25; GAP-Dense128-Dropout0.5-sigmoid | Random |
+| Complex CNN | Four VGG blocks, two Conv-BN-ReLU sequences each, filters 32/64/128/256, MaxPool after each block with block dropout disabled; GAP-Dense128-Dropout0.5-sigmoid, with L2 regularization on convolutional layers and Dense128 | Random |
 | ResNet18 | Backbone-GAP-Dense128-Dropout0.5-sigmoid | ImageNet, KerasHub preset |
 | ResNet50 | Backbone-GAP-Dense128-Dropout0.5-sigmoid | ImageNet, Keras Applications |
 | EfficientNetB4 | Backbone-GAP-Dense128-Dropout0.5-sigmoid | ImageNet, Keras Applications |
